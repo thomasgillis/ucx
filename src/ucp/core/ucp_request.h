@@ -121,6 +121,7 @@ struct ucp_request {
                     ucp_request_callback_t    flushed_cb;/* Called when flushed */
                     uct_worker_cb_id_t        slow_cb_id;/* Slow-path callback */
                     ucp_lane_map_t            lanes;     /* Which lanes need to be flushed */
+                    unsigned                  uct_flags; /* TODO: */
                 } flush;
 
                 struct {
