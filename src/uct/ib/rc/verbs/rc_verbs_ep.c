@@ -498,6 +498,12 @@ ucs_status_t uct_rc_verbs_ep_flush(uct_ep_h tl_ep, unsigned flags,
     uct_rc_verbs_ep_t *ep = ucs_derived_of(tl_ep, uct_rc_verbs_ep_t);
     ucs_status_t status;
 
+    if (ucs_unlikely(flags & UCT_FLUSH_FLAG_CANCEL)) {
+        uct_rc_txqp_purge_outstanding(&ep->super.txqp, UCS_ERR_CANCELED, 0);
+        uct_ep_pending_purge(&ep->super.super.super, NULL, 0);
+        return UCS_OK;
+    }
+
     status = uct_rc_ep_flush(&ep->super, iface->config.tx_max_wr);
     if (status != UCS_INPROGRESS) {
         return status;
