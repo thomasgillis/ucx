@@ -850,6 +850,15 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rc_verbs_ep_t)
                                                  uct_rc_verbs_iface_t);
     uct_worker_progress_remove(iface->super.super.super.worker,
                                &iface->super.super.super.prog);
+    /* NOTE: usually, ci == pi here, but if user calls
+     *       flush(UCT_FLUSH_FLAG_CANCEL) then ep_destroy without next progress,
+     *       TX-completion handler is not able to return CQ credits because
+     *       the EP will not be found (base class destructor deletes itself from
+     *       iface->eps). So, lets return credits here since handle_failure
+     *       ignores not found EP. */
+    ucs_assert(self->txcnt.pi >= self->txcnt.ci);
+    iface->super.tx.cq_available += self->txcnt.pi - self->txcnt.ci;
+    ucs_assert(iface->super.tx.cq_available < iface->super.config.tx_ops_count);
     uct_rc_verbs_ep_tag_qp_destroy(self);
 }
 
