@@ -175,6 +175,10 @@ void test_ucp_peer_failure::test_force_close()
         reqs.pop_back();
     }
 
+    /* When all requests on sender are done we need to prevent LOCAL_FLUSH
+     * in test teardown. Receiver is killed and doesn't respond on FC requests
+     */
+    sender().destroy_worker();
     free(buf);
 }
 
