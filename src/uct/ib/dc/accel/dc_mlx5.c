@@ -479,9 +479,20 @@ ucs_status_t uct_dc_mlx5_ep_get_zcopy(uct_ep_h tl_ep, const uct_iov_t *iov, size
 
 ucs_status_t uct_dc_mlx5_ep_flush(uct_ep_h tl_ep, unsigned flags, uct_completion_t *comp)
 {
-    uct_dc_mlx5_iface_t *iface = ucs_derived_of(tl_ep->iface, uct_dc_mlx5_iface_t);
-    uct_dc_mlx5_ep_t *ep = ucs_derived_of(tl_ep, uct_dc_mlx5_ep_t);
-    ucs_status_t status;
+    uct_dc_mlx5_iface_t *iface = ucs_derived_of(tl_ep->iface,
+                                                uct_dc_mlx5_iface_t);
+    uct_dc_mlx5_ep_t    *ep    = ucs_derived_of(tl_ep, uct_dc_mlx5_ep_t);
+    uint8_t             dci    = ep->super.dci;
+    ucs_status_t        status;
+
+    if (ucs_unlikely(flags & UCT_FLUSH_FLAG_CANCEL)) {
+        if (dci != UCT_DC_EP_NO_DCI) {
+            uct_rc_txqp_purge_outstanding(&iface->super.tx.dcis[dci].txqp,
+                                          UCS_ERR_CANCELED, 0);
+        }
+        uct_ep_pending_purge(tl_ep, NULL, 0);
+        return UCS_OK;
+    }
 
     status = uct_dc_ep_flush(tl_ep, flags, comp);
     if (status == UCS_OK) {
@@ -489,7 +500,7 @@ ucs_status_t uct_dc_mlx5_ep_flush(uct_ep_h tl_ep, unsigned flags, uct_completion
     }
 
     if (status == UCS_INPROGRESS) {
-        ucs_assert(ep->super.dci != UCT_DC_EP_NO_DCI);
+        ucs_assert(dci != UCT_DC_EP_NO_DCI);
         uct_dc_mlx5_iface_add_send_comp(iface, ep, comp);
     }
     return status;
