@@ -20,6 +20,10 @@
 #include <sys/poll.h>
 #include <sys/eventfd.h>
 
+/* Maximal number of events to read at once from the internal signaling pipe */
+#define UCP_WORKER_MAX_SIG_EVENTS  32
+
+
 #if ENABLE_STATS
 static ucs_stats_class_t ucp_worker_stats_class = {
     .name           = "ucp_worker",
@@ -55,6 +59,32 @@ ucs_mpool_ops_t ucp_reg_mpool_ops = {
 void ucp_worker_iface_check_events(ucp_worker_iface_t *wiface, int force);
 
 
+static ucs_status_t ucp_worker_wakeup_ctl_fd(ucp_worker_h worker, int op,
+                                             int event_fd)
+{
+    struct epoll_event event = {0};
+    int ret;
+
+    if (!(worker->context->config.features & UCP_FEATURE_WAKEUP)) {
+        return UCS_OK;
+    }
+
+    event.data    = worker->epoll_data;
+    event.events  = EPOLLIN;
+    if (worker->flags & UCP_WORKER_FLAG_EDGE_TRIGGERED) {
+        event.events |= EPOLLET;
+    }
+
+    ret = epoll_ctl(worker->epfd, op, event_fd, &event);
+    if (ret == -1) {
+        ucs_error("epoll_ctl(epfd=%d, op=%d, fd=%d) failed: %m", worker->epfd,
+                  op, event_fd);
+        return UCS_ERR_IO_ERROR;
+    }
+
+    return UCS_OK;
+}
+
 static void ucp_worker_close_ifaces(ucp_worker_h worker)
 {
     ucp_rsc_index_t rsc_index;
@@ -73,6 +103,7 @@ static void ucp_worker_close_ifaces(ucp_worker_h worker)
                                             &wiface->check_events_id);
 
         if (wiface->on_arm_list) {
+            ucp_worker_wakeup_ctl_fd(worker, EPOLL_CTL_DEL, wiface->event_fd);
             ucs_list_del(&wiface->arm_list);
         }
 
@@ -181,33 +212,11 @@ static void ucp_worker_am_tracer(void *arg, uct_am_trace_type_t type,
     }
 }
 
-static ucs_status_t ucp_worker_wakeup_ctl_fd(ucp_worker_h worker, int op,
-                                             int event_fd)
-{
-    struct epoll_event event = {0};
-    int ret;
-
-    if (!(worker->context->config.features & UCP_FEATURE_WAKEUP)) {
-        return UCS_OK;
-    }
-
-    event.data.fd = event_fd;
-    event.events  = EPOLLIN;
-
-    ret = epoll_ctl(worker->epfd, op, event_fd, &event);
-    if (ret == -1) {
-        ucs_error("epoll_ctl(epfd=%d, op=%d, fd=%d) failed: %m", worker->epfd,
-                  op, event_fd);
-        return UCS_ERR_IO_ERROR;
-    }
-
-    return UCS_OK;
-}
-
 static ucs_status_t ucp_worker_wakeup_init(ucp_worker_h worker,
-                                           ucp_wakeup_event_t events)
+                                           const ucp_worker_params_t *params)
 {
     ucp_context_h context = worker->context;
+    ucp_wakeup_event_t events;
     ucs_status_t status;
 
     if (!(context->config.features & UCP_FEATURE_WAKEUP)) {
@@ -218,11 +227,29 @@ static ucs_status_t ucp_worker_wakeup_init(ucp_worker_h worker,
         goto out;
     }
 
-    worker->epfd = epoll_create(context->num_tls);
-    if (worker->epfd == -1) {
-        ucs_error("Failed to create epoll file descriptor: %m");
-        status = UCS_ERR_IO_ERROR;
-        goto out;
+    if (params->field_mask & UCP_WORKER_PARAM_FIELD_EVENTS) {
+        events = params->events;
+    } else {
+        events = UCP_WAKEUP_RMA | UCP_WAKEUP_AMO | UCP_WAKEUP_TAG_SEND |
+                 UCP_WAKEUP_TAG_RECV;
+    }
+
+    if (params->field_mask & UCP_WORKER_PARAM_FIELD_EPOLL) {
+        worker->epfd        = params->epoll.epoll_fd;
+        worker->epoll_data  = params->epoll.epoll_data;
+        worker->flags      |= UCP_WORKER_FLAG_EXTERNAL_EPOLL;
+    } else {
+        worker->epfd = epoll_create(context->num_tls);
+        if (worker->epfd == -1) {
+            ucs_error("Failed to create epoll file descriptor: %m");
+            status = UCS_ERR_IO_ERROR;
+            goto out;
+        }
+        memset(&worker->epoll_data, 0, sizeof(worker->epoll_data));
+    }
+
+    if (events & UCP_WAKEUP_EDGE) {
+        worker->flags |= UCP_WORKER_FLAG_EDGE_TRIGGERED;
     }
 
     worker->eventfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
@@ -266,7 +293,9 @@ out:
 
 static void ucp_worker_wakeup_cleanup(ucp_worker_h worker)
 {
-    if (worker->epfd != -1) {
+    if ((worker->epfd != -1) &&
+        !(worker->flags & UCP_WORKER_FLAG_EXTERNAL_EPOLL))
+    {
         close(worker->epfd);
     }
     if (worker->eventfd != -1) {
@@ -493,6 +522,9 @@ static ucs_status_t ucp_worker_iface_check_events_do(ucp_worker_iface_t *wiface,
         *progress_count = 0;
         return UCS_OK;
     }
+
+    /* clear events on interface which is not on arm_list */
+    uct_iface_event_clear(wiface->iface);
 
     prev_am_count = wiface->proxy_am_count;
 
@@ -939,7 +971,6 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
     unsigned name_length;
     ucs_cpu_set_t empty_cpu_mask;
     ucs_thread_mode_t thread_mode;
-    ucp_wakeup_event_t events;
     const ucs_cpu_set_t *cpu_mask;
 
     /* Space for eager header is needed for unexpected tag offload messages */
@@ -974,6 +1005,7 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
     worker->context           = context;
     worker->uuid              = ucs_generate_uuid((uintptr_t)worker);
     worker->wireup_pend_count = 0;
+    worker->flags             = 0;
     worker->inprogress        = 0;
     worker->ep_config_max     = config_count;
     worker->ep_config_count   = 0;
@@ -1021,15 +1053,8 @@ ucs_status_t ucp_worker_create(ucp_context_h context,
         goto err_destroy_uct_worker;
     }
 
-    if (params->field_mask & UCP_WORKER_PARAM_FIELD_EVENTS) {
-        events = params->events;
-    } else {
-        events = UCP_WAKEUP_RMA | UCP_WAKEUP_AMO | UCP_WAKEUP_TAG_SEND |
-                 UCP_WAKEUP_TAG_RECV;
-    }
-
     /* Create epoll set which combines events from all transports */
-    status = ucp_worker_wakeup_init(worker, events);
+    status = ucp_worker_wakeup_init(worker, params);
     if (status != UCS_OK) {
         goto err_req_mp_cleanup;
     }
@@ -1146,13 +1171,48 @@ unsigned ucp_worker_progress(ucp_worker_h worker)
 
 ucs_status_t ucp_worker_get_efd(ucp_worker_h worker, int *fd)
 {
+    ucs_status_t status;
+
     UCP_THREAD_CS_ENTER_CONDITIONAL(&worker->mt_lock);
-    *fd = worker->epfd;
+    if (worker->flags & UCP_WORKER_FLAG_EXTERNAL_EPOLL) {
+        status = UCS_ERR_UNSUPPORTED;
+    } else {
+        *fd = worker->epfd;
+        status = UCS_OK;
+    }
     UCP_THREAD_CS_EXIT_CONDITIONAL(&worker->mt_lock);
-    return UCS_OK;
+    return status;
 }
 
 ucs_status_t ucp_worker_arm(ucp_worker_h worker)
+{
+    ucp_worker_iface_t *wiface;
+    ucs_status_t status;
+
+    ucs_trace_func("worker=%p", worker);
+
+    UCP_THREAD_CS_ENTER_CONDITIONAL(&worker->mt_lock);
+
+    /* Go over arm_list of active interfaces which support events and arm them */
+    ucs_list_for_each(wiface, &worker->arm_ifaces, arm_list) {
+        ucs_assert(wiface->activate_count > 0);
+        status = uct_iface_event_arm(wiface->iface, worker->uct_events);
+        ucs_trace("worker %p arm iface %p returned %s", worker, wiface->iface,
+                  ucs_status_string(status));
+        if (status != UCS_OK) {
+            goto out_unlock;
+        }
+    }
+
+    status = UCS_OK;
+
+out_unlock:
+    UCP_THREAD_CS_EXIT_CONDITIONAL(&worker->mt_lock);
+    ucs_trace("ucp_worker_arm returning %s", ucs_status_string(status));
+    return status;
+}
+
+ucs_status_t ucp_worker_clear_efd(ucp_worker_h worker)
 {
     ucp_worker_iface_t *wiface;
     ucs_status_t status;
@@ -1166,10 +1226,7 @@ ucs_status_t ucp_worker_arm(ucp_worker_h worker)
      */
     do {
         ret = read(worker->eventfd, &dummy, sizeof(dummy));
-        if (ret == sizeof(dummy)) {
-            status = UCS_ERR_BUSY;
-            goto out;
-        } else if (ret == -1) {
+        if (ret == -1) {
             if (errno == EAGAIN) {
                 break; /* No more events */
             } else if (errno != EINTR) {
@@ -1178,7 +1235,7 @@ ucs_status_t ucp_worker_arm(ucp_worker_h worker)
                 goto out;
             }
         } else {
-            ucs_assert(ret == 0);
+            ucs_assert(ret <= sizeof(dummy));
         }
     } while (ret != 0);
 
@@ -1187,8 +1244,8 @@ ucs_status_t ucp_worker_arm(ucp_worker_h worker)
     /* Go over arm_list of active interfaces which support events and arm them */
     ucs_list_for_each(wiface, &worker->arm_ifaces, arm_list) {
         ucs_assert(wiface->activate_count > 0);
-        status = uct_iface_event_arm(wiface->iface, worker->uct_events);
-        ucs_trace("arm iface %p returned %s", wiface->iface,
+        status = uct_iface_event_clear(wiface->iface);
+        ucs_trace("worker %p clear iface %p returned %s", worker, wiface->iface,
                   ucs_status_string(status));
         if (status != UCS_OK) {
             goto out_unlock;
@@ -1227,11 +1284,17 @@ ucs_status_t ucp_worker_wait(ucp_worker_h worker)
         goto out;
     }
 
+    if (worker->flags & UCP_WORKER_FLAG_EXTERNAL_EPOLL) {
+        // TODO support this
+        ucs_fatal("cannot wait on external epfd");
+    }
+
     pfd.fd      = worker->epfd;
     pfd.events  = POLLIN;
     pfd.revents = 0;
 
     for (;;) {
+        // TODO use epoll_wait
         ret = poll(&pfd, 1, -1);
         if (ret >= 0) {
             ucs_assertv(ret == 1, "ret=%d", ret);

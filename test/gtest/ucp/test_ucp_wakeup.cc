@@ -5,9 +5,11 @@
 */
 
 #include "ucp_test.h"
-#include "poll.h"
 
 #include <algorithm>
+#include <sys/epoll.h>
+#include <sys/poll.h>
+
 
 class test_ucp_wakeup : public ucp_test {
 public:
@@ -42,6 +44,10 @@ protected:
         ASSERT_EQ(UCS_OK, status);
     }
 
+    void clear(ucp_worker_h worker) {
+        ASSERT_EQ(UCS_OK, ucp_worker_clear_efd(worker));
+    }
+
     static size_t comp_cntr;
 };
 
@@ -55,7 +61,7 @@ UCS_TEST_P(test_ucp_wakeup, efd)
     int recv_efd;
     void *req;
 
-    sender().connect(&receiver());
+    sender().connect(&receiver(), get_ep_params());
 
     recv_worker = receiver().worker();
     ASSERT_UCS_OK(ucp_worker_get_efd(recv_worker, &recv_efd));
@@ -87,23 +93,26 @@ UCS_TEST_P(test_ucp_wakeup, efd)
         }
         ASSERT_UCS_OK(status);
 
+        struct pollfd pollfd = { recv_efd, POLLIN };
         int ret;
         do {
-            struct pollfd pollfd;
-            pollfd.events = POLLIN;
-            pollfd.fd     = recv_efd;
             ret = poll(&pollfd, 1, -1);
         } while ((ret < 0) && (errno == EINTR));
         if (ret < 0) {
             UCS_TEST_MESSAGE << "poll() failed: " << strerror(errno);
         }
         ASSERT_EQ(1, ret);
-        EXPECT_EQ(UCS_ERR_BUSY, ucp_worker_arm(recv_worker));
+
+        ucs_time_t deadline = ucs_get_time() + ucs_time_from_sec(10.0);
+        do {
+            EXPECT_EQ(UCS_OK, ucp_worker_clear_efd(recv_worker));
+            ret = poll(&pollfd, 1, 0);
+        } while ((ret != 0) && (ucs_get_time() < deadline));
+        ASSERT_EQ(0, ret);
     }
 
     ucp_request_release(req);
 
-    close(recv_efd);
     ucp_worker_flush(sender().worker());
     EXPECT_EQ(send_data, recv_data);
 }
@@ -116,7 +125,7 @@ UCS_TEST_P(test_ucp_wakeup, tx_wait, "ZCOPY_THRESH=10000")
     std::string send_data(COUNT, '2'), recv_data(COUNT, '1');
     void *sreq, *rreq;
 
-    sender().connect(&receiver());
+    sender().connect(&receiver(), get_ep_params());
 
     rreq = ucp_tag_recv_nb(receiver().worker(), &recv_data[0], COUNT, DATATYPE,
                            TAG, (ucp_tag_t)-1, recv_completion);
@@ -153,20 +162,23 @@ UCS_TEST_P(test_ucp_wakeup, signal)
 
     polled.fd = efd;
     EXPECT_EQ(0, poll(&polled, 1, 0));
+    clear(worker);
     arm(worker);
     ASSERT_UCS_OK(ucp_worker_signal(worker));
     EXPECT_EQ(1, poll(&polled, 1, 0));
+    clear(worker);
     arm(worker);
     EXPECT_EQ(0, poll(&polled, 1, 0));
 
     ASSERT_UCS_OK(ucp_worker_signal(worker));
     ASSERT_UCS_OK(ucp_worker_signal(worker));
     EXPECT_EQ(1, poll(&polled, 1, 0));
-    arm(worker);
+    clear(worker);
     EXPECT_EQ(0, poll(&polled, 1, 0));
+    arm(worker);
 
     ASSERT_UCS_OK(ucp_worker_signal(worker));
-    EXPECT_EQ(UCS_ERR_BUSY, ucp_worker_arm(worker));
+    clear(worker);
     EXPECT_EQ(UCS_OK, ucp_worker_arm(worker));
 
     close(efd);
@@ -174,50 +186,134 @@ UCS_TEST_P(test_ucp_wakeup, signal)
 
 UCP_INSTANTIATE_TEST_CASE(test_ucp_wakeup)
 
+class test_ucp_wakeup_external_epollfd : public test_ucp_wakeup {
+public:
+    virtual ucp_worker_params_t get_worker_params() {
+        ucp_worker_params_t params = test_ucp_wakeup::get_worker_params();
+        params.field_mask |= UCP_WORKER_PARAM_FIELD_EPOLL;
+        params.epoll.epoll_fd       = m_epfd;
+        params.epoll.epoll_data.u32 = EP_DATA32;
+        return params;
+    }
+
+protected:
+    enum {
+        EP_DATA32 = 0x1337
+    };
+
+    virtual void init() {
+        m_epfd = epoll_create(1);
+        ASSERT_GE(m_epfd, 0);
+        test_ucp_wakeup::init();
+    }
+
+    virtual void cleanup() {
+        test_ucp_wakeup::cleanup();
+        close(m_epfd);
+    }
+
+    int m_epfd;
+};
+
+UCS_TEST_P(test_ucp_wakeup_external_epollfd, epoll_wait)
+{
+    const ucp_datatype_t DATATYPE = ucp_dt_make_contig(1);
+    const uint64_t TAG = 0xdeadbeef;
+    void *req;
+
+    sender().connect(&receiver(), get_ep_params());
+
+    uint64_t send_data = 0x12121212;
+    req = ucp_tag_send_nb(sender().ep(), &send_data, sizeof(send_data), DATATYPE,
+                          TAG, send_completion);
+    if (UCS_PTR_IS_PTR(req)) {
+        wait(req);
+    } else {
+        ASSERT_UCS_OK(UCS_PTR_STATUS(req));
+    }
+
+    uint64_t recv_data = 0;
+    req = ucp_tag_recv_nb(receiver().worker(), &recv_data, sizeof(recv_data),
+                          DATATYPE, TAG, (ucp_tag_t)-1, recv_completion);
+    while (!ucp_request_is_completed(req)) {
+
+        ucp_worker_h recv_worker = receiver().worker();
+
+        if (ucp_worker_progress(recv_worker)) {
+            /* Got some receive events, check request */
+            continue;
+        }
+
+        ucs_status_t status = ucp_worker_arm(recv_worker);
+        if (status == UCS_ERR_BUSY) {
+            /* Could not arm, poll again */
+            ucp_worker_progress(recv_worker);
+            continue;
+        }
+        ASSERT_UCS_OK(status);
+
+        struct epoll_event event;
+        int ret;
+        do {
+            ret = epoll_wait(m_epfd, &event, 1, -1);
+        } while ((ret < 0) && (errno == EINTR));
+        if (ret < 0) {
+            UCS_TEST_MESSAGE << "epoll_wait() failed: " << strerror(errno);
+        }
+        ASSERT_EQ(1, ret);
+        EXPECT_EQ(EP_DATA32, (int)event.data.u32);
+    }
+
+    ucp_request_release(req);
+
+    ucp_worker_flush(sender().worker());
+    EXPECT_EQ(send_data, recv_data);
+}
+
+UCP_INSTANTIATE_TEST_CASE(test_ucp_wakeup_external_epollfd)
+
 class test_ucp_wakeup_events : public test_ucp_wakeup
 {
 public:
     static std::vector<ucp_test_param>
     enum_test_params(const ucp_params_t& ctx_params,
-                     const ucp_worker_params_t& worker_params,
-                     const ucp_ep_params_t& ep_params,
                      const std::string& name,
                      const std::string& test_case_name,
                      const std::string& tls);
 
+    virtual ucp_worker_params_t get_worker_params();
+
     void do_tx_rx_events_test(const std::vector<std::string>& transports,
                               unsigned events);
-
-private:
-    static void setup_worker_param_events(ucp_worker_params_t& params,
-                                          unsigned events);
 };
 
 std::vector<ucp_test_param>
 test_ucp_wakeup_events::enum_test_params(const ucp_params_t& ctx_params,
-                                         const ucp_worker_params_t& worker_params,
-                                         const ucp_ep_params_t& ep_params,
                                          const std::string& name,
                                          const std::string& test_case_name,
                                          const std::string& tls)
 {
     std::vector<ucp_test_param> result;
-    ucp_worker_params_t worker_params_tmp = worker_params;
 
     /* TODO: add RMA and AMO after required optimizations */
-    setup_worker_param_events(worker_params_tmp, UCP_WAKEUP_TAG_SEND);
-    generate_test_params_variant(ctx_params, worker_params_tmp, ep_params, name,
-                                 test_case_name + "/tag_send", tls, 0, result);
+    generate_test_params_variant(ctx_params, name, test_case_name + "/tag_send",
+                                 tls, UCP_WAKEUP_TAG_SEND, result);
 
-    setup_worker_param_events(worker_params_tmp, UCP_WAKEUP_TAG_RECV);
-    generate_test_params_variant(ctx_params, worker_params_tmp, ep_params, name,
-                                 test_case_name + "/tag_recv", tls, 0, result);
+    generate_test_params_variant(ctx_params, name, test_case_name + "/tag_recv",
+                                 tls, UCP_WAKEUP_TAG_RECV, result);
 
-    setup_worker_param_events(worker_params_tmp,
-                              UCP_WAKEUP_TAG_SEND | UCP_WAKEUP_TAG_RECV);
-    generate_test_params_variant(ctx_params, worker_params_tmp, ep_params, name,
-                                 test_case_name + "/all", tls, 0, result);
+    generate_test_params_variant(ctx_params, name, test_case_name + "/all",
+                                 tls, UCP_WAKEUP_TAG_SEND | UCP_WAKEUP_TAG_RECV,
+                                 result);
     return result;
+}
+
+ucp_worker_params_t test_ucp_wakeup_events::get_worker_params()
+{
+    ucp_worker_params_t params = test_ucp_wakeup::get_worker_params();
+    params.field_mask |= UCP_WORKER_PARAM_FIELD_EVENTS;
+    params.events      = GetParam().variant;
+    return params;
 }
 
 static inline bool is_any_tl_inuse(const std::vector<std::string>& transports,
@@ -259,8 +355,8 @@ test_ucp_wakeup_events::do_tx_rx_events_test(const std::vector<std::string>& tra
 
     polled[0].events = polled[1].events = POLLIN;
 
-    p_entity[0]->connect(p_entity[1]);
-    p_entity[1]->connect(p_entity[0]);
+    p_entity[0]->connect(p_entity[1], get_ep_params());
+    p_entity[1]->connect(p_entity[0], get_ep_params());
 
     ASSERT_UCS_OK(ucp_worker_get_efd(p_entity[0]->worker(), &efd[0]));
     ASSERT_UCS_OK(ucp_worker_get_efd(p_entity[1]->worker(), &efd[1]));
@@ -346,22 +442,10 @@ test_ucp_wakeup_events::do_tx_rx_events_test(const std::vector<std::string>& tra
     ucp_worker_flush(p_entity[1]->worker());
 }
 
-void
-test_ucp_wakeup_events::setup_worker_param_events(ucp_worker_params_t& params,
-                                                  unsigned events)
-{
-    params.field_mask |= UCP_WORKER_PARAM_FIELD_EVENTS;
-    params.events = events;
-}
-
 UCS_TEST_P(test_ucp_wakeup_events, events)
 {
     UCS_TEST_SKIP_R("Functionality is not implemented yet");
-
-    EXPECT_TRUE(GetParam().worker_params.field_mask &
-                UCP_WORKER_PARAM_FIELD_EVENTS);
-    do_tx_rx_events_test(GetParam().transports,
-                         GetParam().worker_params.events);
+    do_tx_rx_events_test(GetParam().transports, GetParam().variant);
 }
 
 UCP_INSTANTIATE_TEST_CASE(test_ucp_wakeup_events)

@@ -14,6 +14,7 @@
 #include <ucs/type/thread_mode.h>
 #include <ucs/type/cpu_set.h>
 #include <ucs/config/types.h>
+#include <sys/epoll.h>
 #include <stdio.h>
 
 
@@ -153,7 +154,9 @@ enum ucp_feature {
 enum ucp_worker_params_field {
     UCP_WORKER_PARAM_FIELD_THREAD_MODE  = UCS_BIT(0), /**< UCP thread mode */
     UCP_WORKER_PARAM_FIELD_CPU_MASK     = UCS_BIT(1), /**< Worker's CPU bitmap */
-    UCP_WORKER_PARAM_FIELD_EVENTS       = UCS_BIT(2)  /**< Worker's events bitmap */
+    UCP_WORKER_PARAM_FIELD_EVENTS       = UCS_BIT(2), /**< Worker's events bitmap */
+    UCP_WORKER_PARAM_FIELD_EPOLL        = UCS_BIT(3)  /**< External epoll file
+                                                           descriptor */
 };
 
 
@@ -678,6 +681,23 @@ typedef struct ucp_worker_params {
      * wakeup.
      */
     unsigned                events;
+
+    /**
+     * External epoll file descriptor and associated data. This value is optional.
+     * If it's not set (along with its corresponding bit in the field_mask -
+     * UCP_WORKER_PARAM_FIELD_EPOLL), events on the worker will be reported on
+     * the file descriptor returned from @ref ucp_worker_get_efd().
+     * Otherwise, events on the worker will be added to the provided epoll set
+     * with the provided epoll data. In this case, calling the function
+     * @ref ucp_worker_get_efd() will result in an error
+     */
+    struct {
+        int                 epoll_fd;    /**< epoll file descriptor */
+        epoll_data_t        epoll_data;  /**< data associated with events on
+                                              the current worker. Will be
+                                              returned from epoll_wait(). */
+    } epoll;
+
 } ucp_worker_params_t;
 
 
@@ -1314,7 +1334,7 @@ void ucp_worker_wait_mem(ucp_worker_h worker, void *address);
  *              continue;                 // got something uninteresting, retry
  *         }
  *
- *         // arm the worker and clean-up fd
+ *         // arm the worker
  *         status = ucp_worker_arm(worker);
  *         if (UCS_OK == status) {
  *             poll(&fds, nfds, timeout);  // wait for events
@@ -1323,6 +1343,9 @@ void ucp_worker_wait_mem(ucp_worker_h worker, void *address);
  *         } else {
  *             abort();
  *         }
+ *
+ *         // clean-up fd
+ *         ucp_worker_clear_efd(worker);
  *     }
  * }
  * @endcode
@@ -1342,6 +1365,21 @@ void ucp_worker_wait_mem(ucp_worker_h worker, void *address);
  * @return @ref ucs_status_t "Other" different error codes in case of issues.
  */
 ucs_status_t ucp_worker_arm(ucp_worker_h worker);
+
+
+/**
+ * @ingroup UCP_WAKEUP
+ * @brief Clear events from the worker file descriptor.
+ *
+ * This routine removes events from the worker file descriptor, so it will not
+ * be signaled any more. If this function is not called, the file descriptor
+ * remains in signaled state.
+ *
+ * @param [in]  worker    Worker to clear events on.
+ *
+ * @return Error code as defined by @ref ucs_status_t
+ */
+ucs_status_t ucp_worker_clear_efd(ucp_worker_h worker);
 
 
 /**

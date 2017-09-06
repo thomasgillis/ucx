@@ -626,6 +626,8 @@ static UCS_CLASS_CLEANUP_FUNC(uct_ib_iface_t)
 {
     int ret;
 
+    uct_ib_iface_event_clear(&self->super.super);
+
     ret = ibv_destroy_cq(self->recv_cq);
     if (ret != 0) {
         ucs_warn("ibv_destroy_cq(recv_cq) returned %d: %m", ret);
@@ -796,19 +798,21 @@ ucs_status_t uct_ib_iface_event_fd_get(uct_iface_h tl_iface, int *fd_p)
     return UCS_OK;
 }
 
-ucs_status_t uct_ib_iface_event_arm(uct_iface_h tl_iface, unsigned events)
+ucs_status_t uct_ib_iface_event_clear(uct_iface_h tl_iface)
 {
     uct_ib_iface_t *iface = ucs_derived_of(tl_iface, uct_ib_iface_t);
-    int res, send_cq_count, recv_cq_count;
-    ucs_status_t status;
+    int ret, send_cq_count, recv_cq_count;
     struct ibv_cq *cq;
     void *cq_context;
 
     send_cq_count = 0;
     recv_cq_count = 0;
     do {
-        res = ibv_get_cq_event(iface->comp_channel, &cq, &cq_context);
-        if (0 == res) {
+        ret = ibv_get_cq_event(iface->comp_channel, &cq, &cq_context);
+        ucs_trace("iface %p ibv_get_cq_event(fd=%d) returned %d",
+                  iface, iface->comp_channel->fd, ret);
+
+        if (0 == ret) {
             if (iface->send_cq == cq) {
                 ++send_cq_count;
             }
@@ -816,7 +820,7 @@ ucs_status_t uct_ib_iface_event_arm(uct_iface_h tl_iface, unsigned events)
                 ++recv_cq_count;
             }
         }
-    } while (res == 0);
+    } while (ret == 0);
 
     if (errno != EAGAIN) {
         return UCS_ERR_IO_ERROR;
@@ -830,39 +834,18 @@ ucs_status_t uct_ib_iface_event_arm(uct_iface_h tl_iface, unsigned events)
         ibv_ack_cq_events(iface->recv_cq, recv_cq_count);
     }
 
-    /* avoid re-arming the interface if any events exists */
-    if ((send_cq_count > 0) || (recv_cq_count > 0)) {
-        ucs_trace("arm_cq: got %d send and %d recv events, returning BUSY",
-                  send_cq_count, recv_cq_count);
-        return UCS_ERR_BUSY;
-    }
-
-    if (events & UCT_EVENT_SEND_COMP) {
-        status = iface->ops->arm_tx_cq(iface);
-        if (status != UCS_OK) {
-            return status;
-        }
-    }
-
-    if (events & UCT_EVENT_RECV_AM) {
-        status = iface->ops->arm_rx_cq(iface, 0);
-        if (status != UCS_OK) {
-            return status;
-        }
-    }
-
     return UCS_OK;
 }
 
 static ucs_status_t uct_ib_iface_arm_cq(uct_ib_iface_t *iface, struct ibv_cq *cq,
-                                        int solicited)
+                                        int solicited_only)
 {
     int ret;
 
-    ret = ibv_req_notify_cq(cq, solicited);
+    ret = ibv_req_notify_cq(cq, solicited_only);
     if (ret != 0) {
-        ucs_error("ibv_req_notify_cq("UCT_IB_IFACE_FMT", cq) failed: %m",
-                  UCT_IB_IFACE_ARG(iface));
+        ucs_error("ibv_req_notify_cq("UCT_IB_IFACE_FMT", cq, sol=%d) failed: %m",
+                  UCT_IB_IFACE_ARG(iface), solicited_only);
         return UCS_ERR_IO_ERROR;
     }
     return UCS_OK;
@@ -873,7 +856,7 @@ ucs_status_t uct_ib_iface_arm_tx_cq(uct_ib_iface_t *iface)
     return uct_ib_iface_arm_cq(iface, iface->send_cq, 0);
 }
 
-ucs_status_t uct_ib_iface_arm_rx_cq(uct_ib_iface_t *iface, int solicited)
+ucs_status_t uct_ib_iface_arm_rx_cq(uct_ib_iface_t *iface, int solicited_only)
 {
-    return uct_ib_iface_arm_cq(iface, iface->recv_cq, solicited);
+    return uct_ib_iface_arm_cq(iface, iface->recv_cq, solicited_only);
 }

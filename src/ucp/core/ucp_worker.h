@@ -35,6 +35,15 @@ enum {
 
 
 /**
+ * UCP worker flags
+ */
+enum {
+    UCP_WORKER_FLAG_EXTERNAL_EPOLL = UCS_BIT(0), /**< epoll fd is external */
+    UCP_WORKER_FLAG_EDGE_TRIGGERED = UCS_BIT(1)  /**< events are edge-triggered */
+};
+
+
+/**
  * UCP worker statistics counters
  */
 enum {
@@ -116,8 +125,10 @@ typedef struct ucp_worker {
 
     unsigned                      wireup_pend_count;/* Number of pending requests on wireup endpoints*/
 
+    unsigned                      flags;         /* Worker flags */
     int                           epfd;          /* Allocated (on-demand) epoll fd for wakeup */
     int                           eventfd;       /* Event fd to support signal() calls */
+    epoll_data_t                  epoll_data;    /* User-data for external epoll */
     unsigned                      uct_events;    /* UCT arm events */
     ucs_list_link_t               arm_ifaces;    /* List of interfaces to arm */
 
