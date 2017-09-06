@@ -39,9 +39,9 @@ static UCS_CLASS_CLEANUP_FUNC(uct_dc_ep_t)
                        self, self->dci);
 
     /* we can handle it but well behaving app should not do this */
-    ucs_warn("ep (%p) is destroyed with %d outstanding ops",
-             self, (int16_t)iface->super.config.tx_qp_len -
-             uct_rc_txqp_available(&iface->tx.dcis[self->dci].txqp));
+    ucs_debug("ep (%p) is destroyed with %d outstanding ops",
+              self, (int16_t)iface->super.config.tx_qp_len -
+              uct_rc_txqp_available(&iface->tx.dcis[self->dci].txqp));
     uct_rc_txqp_purge_outstanding(&iface->tx.dcis[self->dci].txqp, UCS_ERR_CANCELED, 1);
     iface->tx.dcis[self->dci].ep = NULL;
 }

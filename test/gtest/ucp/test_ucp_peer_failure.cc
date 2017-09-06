@@ -60,6 +60,7 @@ public:
     virtual void cleanup();
 
     void test_status_after();
+    void test_force_close();
 
 protected:
     void fail_receiver() {
@@ -134,6 +135,51 @@ void test_ucp_peer_failure::test_status_after()
 
     /* Check workability of second pair */
     smoke_test();
+}
+
+void test_ucp_peer_failure::test_force_close()
+{
+    const size_t         msg_size = 16000;
+    const size_t         iter     = 1000;
+
+    uint8_t *buf = (uint8_t *)calloc(msg_size, iter);
+
+    std::vector<request *> reqs;
+    for (size_t i = 0; i < iter; ++i) {
+        request *sreq = send_nb(&buf[i * msg_size], msg_size, DATATYPE, 0x111337);
+
+        if (UCS_PTR_IS_PTR(sreq)) {
+            reqs.push_back(sreq);
+        } else if (UCS_PTR_IS_ERR(sreq)) {
+            EXPECT_EQ(UCS_ERR_NO_RESOURCE, UCS_PTR_STATUS(sreq));
+            break;
+        }
+    }
+
+    fail_receiver();
+
+    request *close_req = (request *)ucp_ep_close_nb(sender().ep(),
+                                                    UCP_EP_CLOSE_MODE_FORCE);
+    if (UCS_PTR_IS_PTR(close_req)) {
+        wait(close_req);
+        ucp_request_release(close_req);
+    } else {
+        EXPECT_FALSE(UCS_PTR_IS_ERR(close_req));
+    }
+    /* The EP can't be used now */
+    sender().revoke_ep();
+
+    while (!reqs.empty()) {
+        EXPECT_NE(UCS_INPROGRESS, ucp_request_test(reqs.back(), NULL));
+        ucp_request_release(reqs.back());
+        reqs.pop_back();
+    }
+
+    /* When all requests on sender are done we need to prevent LOCAL_FLUSH
+     * in test teardown. Receiver is killed and doesn't respond on FC requests
+     */
+    sender().destroy_worker();
+    free(buf);
 }
 
 UCS_TEST_P(test_ucp_peer_failure, disable_sync_send) {
@@ -466,3 +512,21 @@ UCS_TEST_P(test_ucp_peer_failure_2pairs, status_after_error) {
 }
 
 UCP_INSTANTIATE_TEST_CASE(test_ucp_peer_failure_2pairs)
+
+class test_ucp_ep_force_disconnect : public test_ucp_peer_failure
+{
+public:
+    /* Skip error handling */
+    using test_ucp_tag::get_ep_params;
+
+    virtual void init() {
+        m_env.clear(); /* restore default timeouts. */
+        test_ucp_peer_failure::init();
+    }
+};
+
+UCS_TEST_P(test_ucp_ep_force_disconnect, test) {
+    test_force_close();
+}
+
+UCP_INSTANTIATE_TEST_CASE(test_ucp_ep_force_disconnect)
