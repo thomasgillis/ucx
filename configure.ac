@@ -78,6 +78,11 @@ AC_C_RESTRICT
 m4_include([config/m4/pkg.m4])
 PKG_PROG_PKG_CONFIG
 
+AC_ARG_ENABLE([embedded],
+             [AS_HELP_STRING([--enable-embedded],
+                             [Enable embedded mode @<:@default=no@:>@])
+             ])
+AM_CONDITIONAL([EMBEDDED], [test x"$enable_embedded" = x"yes"])
 
 #
 # Save config flags for version dump tool
