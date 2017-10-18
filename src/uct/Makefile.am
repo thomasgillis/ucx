@@ -16,11 +16,13 @@ libuct_la_LIBADD   = $(LIBM) ../ucs/libucs.la
 libuct_ladir       = $(includedir)/uct
 libmlx5_ver        = \"`(rpm -qf $(IBVERBS_DIR)/include/infiniband/mlx5_hw.h &>/dev/null && rpm -qf /usr/include/infiniband/mlx5_hw.h) | head -1`\"
 
+if !EMBEDDED
 nobase_dist_libuct_la_HEADERS = \
 	api/tl.h \
 	api/uct_def.h \
 	api/uct.h \
 	api/version.h
+endif
 
 noinst_HEADERS = \
 	base/uct_md.h \
