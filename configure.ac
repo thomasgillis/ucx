@@ -81,6 +81,11 @@ AC_FUNC_STRERROR_R
 
 AC_PATH_TOOL([PKG_CONFIG], [pkg-config], [pkg-config])
 
+AC_ARG_ENABLE([embedded],
+             [AS_HELP_STRING([--enable-embedded],
+                             [Enable embedded mode @<:@default=no@:>@])
+             ])
+AM_CONDITIONAL([EMBEDDED], [test x"$enable_embedded" = x"yes"])
 
 #
 # Check if 'ln' supports creating relative links
