@@ -13,11 +13,13 @@ libucp_la_LDFLAGS  = -ldl -version-info $(SOVERSION)
 libucp_la_LIBADD   = ../ucs/libucs.la ../uct/libuct.la
 libucp_ladir       = $(includedir)/ucp
 
+if !EMBEDDED
 nobase_dist_libucp_la_HEADERS = \
 	api/ucp_compat.h \
 	api/ucp_def.h \
 	api/ucp_version.h \
 	api/ucp.h
+endif
 
 noinst_HEADERS = \
 	amo/amo.inl \

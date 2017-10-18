@@ -17,6 +17,7 @@ libucs_la_LIBADD   = \
 	$(LIBM) \
 	$(top_builddir)/src/ucm/libucm.la
 
+if !EMBEDDED
 nobase_dist_libucs_la_HEADERS = \
 	algorithm/crc.h \
 	algorithm/qsort_r.h \
@@ -55,6 +56,7 @@ nobase_dist_libucs_la_HEADERS = \
 	type/status.h \
 	type/thread_mode.h \
 	type/cpu_set.h
+endif
 
 noinst_HEADERS = \
 	datastruct/arbiter.h \
