@@ -21,7 +21,9 @@ dist_perftest_DATA = \
 	$(top_srcdir)/contrib/ucx_perftest_config/test_types \
 	$(top_srcdir)/contrib/ucx_perftest_config/transports
 
+if !EMBEDDED
 bin_PROGRAMS          = ucx_perftest
+endif
 noinst_LTLIBRARIES    = libucxperf.la
 
 AM_CPPFLAGS           = \
