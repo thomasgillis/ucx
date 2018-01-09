@@ -5,7 +5,9 @@
 # See file LICENSE for terms.
 #
 
+if !EMBEDDED
 bin_PROGRAMS          = ucx_info
+endif
 AM_CPPFLAGS           = \
     $(BASE_CPPFLAGS) \
     -I$(abs_top_srcdir)/src \
