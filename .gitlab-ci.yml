@@ -12,7 +12,7 @@ build:
 #  - make dist
 #  - export CI_COMMIT_TAG="v42.11"
   - python -c 'import os; print os.environ.get("CI_COMMIT_TAG")'
-  - 'export upload_url=$(curl -s -H "Authorization: token $github_token" "https://api.github.com/repos/amaslenn/ucx/releases" | python -c "import sys,os,json; d=json.load(sys.stdin); tag=os.environ.get(\"CI_COMMIT_TAG\"); rel = [r for r in d if r[\"tag_name\"] == tag]; print rel; url = rel[0][\"upload_url\"] if rel else \"\"; print url" | grep -oP "https\S+assets")'
+  - 'curl -s -H "Authorization: token $github_token" "https://api.github.com/repos/amaslenn/ucx/releases" | python -c "import sys,os,json; d=json.load(sys.stdin); tag=os.environ.get(\"CI_COMMIT_TAG\"); rel = [r for r in d if r[\"tag_name\"] == tag]; print rel; url = rel[0][\"upload_url\"] if rel else \"\"; print url"'
   - echo $upload_url
 #  - 'export tar_name=$(ls *.tar.gz)'
 #  - 'curl -s -H "Authorization: token $github_token" -H "Content-Type: application/zip" --data-binary @"$tar_name" "${upload_url}?name=${tar_name}&label=${tar_name}"'
