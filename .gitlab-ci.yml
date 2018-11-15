@@ -1,4 +1,5 @@
 build:
   script:
+  - python -c 'import os; print os.environ["USER"]'
   - 'export upload_url=$(curl -s -H "Authorization: token $github_token" "https://api.github.com/repos/amaslenn/ucx/releases" | python -c "import sys,os,json; d=json.load(sys.stdin); rel = [r for r in d if r[\"tag_name\"] == \"v42.10\"]; print rel[0][\"upload_url\"]" | grep -oP "https\S+assets")'
   - echo $upload_url 
