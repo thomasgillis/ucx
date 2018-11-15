@@ -1,10 +1,6 @@
-before_script:
-  - apt-get update
-  - apt-get install -y libibverbs-dev
-
 build:
   script:
-  - 'export upload_url=$(curl -s -H "Authorization: token $github_token" "https://api.github.com/repos/amaslenn/ucx/releases" | python -c "import sys,os,json; d=json.load(sys.stdin); rel = [r for r in d if r[\"tag_name\"] == \"v42.10\"]]; print rel[0][\"upload_url\"]" | grep -oP "https\S+assets")'
+  - 'export upload_url=$(curl -s -H "Authorization: token $github_token" "https://api.github.com/repos/amaslenn/ucx/releases" | python -c "import sys,os,json; d=json.load(sys.stdin); rel = [r for r in d if r[\"tag_name\"] == \"v42.10\"]; print rel[0][\"upload_url\"]" | grep -oP "https\S+assets")'
   - 'export tar_name=$(ls *.tar.gz)'
   - 'curl -s -H "Authorization: token $github_token" -H "Content-Type: application/zip" --data-binary @"$tar_name" "${upload_url}?name=${tar_name}&label=${tar_name}"'
 
