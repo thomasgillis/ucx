@@ -33,7 +33,7 @@ stages:
             displayName: Create GitHub Draft Release
             inputs:
               githubConnection: github-release1
-              repositoryName: openucx/ucx
+              repositoryName: openucx
               action: create
               isDraft: true
               addChangeLog: true
