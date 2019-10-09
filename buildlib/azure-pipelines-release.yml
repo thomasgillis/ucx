@@ -27,6 +27,7 @@ stages:
               gcc --version
               ../contrib/configure-release
               ../contrib/buildrpm.sh -s -t -b
+              ls -l
             displayName: Build tarball
 
           - task: GithubRelease@0
@@ -38,5 +39,5 @@ stages:
               isDraft: true
               addChangeLog: true
               assets: |
-                ./ucx-*.tar.gz
-                ./rpm-dist/ucx-*.src.rpm
+                ./*.tar.gz
+                ./rpm-dist/*.src.rpm
