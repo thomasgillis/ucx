@@ -38,4 +38,4 @@ stages:
               repositoryName: openucx/ucx
               action: create
               isDraft: true
-              addChangeLog: true
+              addChangeLog: false
