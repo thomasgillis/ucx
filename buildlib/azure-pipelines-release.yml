@@ -39,4 +39,3 @@ stages:
               action: create
               isDraft: true
               addChangeLog: true
-              assets: ./ucx*.tar.gz
