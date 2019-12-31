@@ -8,12 +8,16 @@
 OpenUCX
 *******
 
-Unified Communication X (UCX) provides an optimized communication layer for
-Message Passing (MPI), PGAS/OpenSHMEM libraries and RPC/data-centric
-applications.
+Unified Communication X (UCX) provides an optimized production proven communication framework for modern, high-bandwidth and low-latency networks.
+UCX exposes a set of abstract communication primitives which utilize the best of available hardware resources and offloads.
+These include RDMA (Infiniband and RoCE), TCP, GPUs, Shared Memory, network based hardware atomics.
 
-UCX utilizes high-speed networks for inter-node communication, and shared
-memory mechanisms for efficient intra-node communication.
+UCX implements best practices for transfer of messages of all sizes, based on accumulated experience gained from applications running on the world's largest datacenters and supercomputers.
+
+UCX facilitates rapid development by providing a high-level API, masking the low-level details, while maintaining high-performance and scalability.
+
+The full list of UCX capabilities and features can be found __here__
+
 
 .. image:: _static/UCX_Layers.png
    :alt: UCX layer diagram
@@ -40,6 +44,8 @@ The following commands will download and build UCX v1.6 :doc:`release <download>
     $ cd ucx-1.6.1
     $ ./contrib/configure-release --prefix=$PWD/install
     $ make -j8 install
+    
+    //todo: document how to run good example with client-server, gpu 
 
 
 Documentation
