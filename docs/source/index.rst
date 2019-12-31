@@ -8,7 +8,7 @@
 OpenUCX
 *******
 
-Unified Communication X (UCX) provides an optimized production proven communication framework for modern, high-bandwidth and low-latency networks.
+Unified Communication X (UCX) is an award winning __link__, optimized production proven communication framework for modern, high-bandwidth and low-latency networks.
 UCX exposes a set of abstract communication primitives which utilize the best of available hardware resources and offloads.
 These include RDMA (Infiniband and RoCE), TCP, GPUs, Shared Memory, network based hardware atomics.
 
@@ -51,18 +51,23 @@ The following commands will download and build UCX v1.6 :doc:`release <download>
 Documentation
 *************
 
-* TODO API
+* todo: add link to UCX API doc
 * `Examples <https://github.com/openucx/ucx/tree/v1.6.x/test/examples>`_
 
 
 Projects using UCX
 ******************
 
+* todo: link pyucx
+* todo: link dask
+* todo: nccl
+ `SparkUCX <http://github.com/openucx/sparkucx>`_
+
+* todo: link slurm
 * `OpenMPI <http://www.open-mpi.org>`_
 * `MPICH <http://www.mpich.org>`_
 * `OSSS shmem <http://github.com/openshmem-org/osss-ucx>`_
-* `SparkUCX <http://github.com/openucx/sparkucx>`_
-
+*
 
 Developers section
 ******************
