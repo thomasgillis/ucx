@@ -165,6 +165,7 @@ $ make -C test/gtest test
     * posix, sysv, [cma](https://dl.acm.org/citation.cfm?id=2616532), [knem](http://knem.gforge.inria.fr/), and [xpmem](https://github.com/hjelmn/xpmem)
 * TCP/IP
 
+  **NOTE:** [Infiniband](https://www.infinibandta.org/) and [RoCE](http://www.roceinitiative.org/) transports requires rdma-core >= 28.0 or MLNX_OFED >= 5.0
 <hr>
 
 ## Supported CPU Architectures
